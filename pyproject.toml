@@ -1,0 +1,17 @@
+[project]
+name = "neo4j-iceberg-itest"
+version = "0.1.0"
+description = "Bidirectional integration test: Neo4j <-> Apache Iceberg"
+requires-python = ">=3.9"
+dependencies = [
+    "neo4j==5.23.0",
+    "pytest==8.3.2",
+    "python-dotenv==1.0.1",
+]
+
+# Host-side only. Spark/pyspark runs inside the spark-iceberg container,
+# so there is no JVM or pyspark dependency here.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v -s"

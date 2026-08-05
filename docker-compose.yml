@@ -1,0 +1,109 @@
+# Docker stack for the Neo4j <-> Iceberg bidirectional integration test.
+#
+#   * iceberg-rest : Iceberg REST catalog (tracks table metadata)
+#   * minio        : S3-compatible object store (holds the Iceberg data/metadata files)
+#   * mc           : one-shot job that creates the "warehouse" bucket in MinIO
+#   * spark-iceberg: Spark 3.5 runtime with Iceberg jars pre-installed; runs the jobs
+#   * neo4j        : OPTIONAL local Neo4j, only started with `--profile local-neo4j`.
+#                    Omit the profile to point the test at an external Neo4j (e.g. Aura)
+#                    purely through the NEO4J_* environment variables.
+
+name: neo4j-iceberg-itest
+
+services:
+  iceberg-rest:
+    image: tabulario/iceberg-rest:1.5.0
+    container_name: iceberg-rest
+    networks: [iceberg_net]
+    ports:
+      - "8181:8181"
+    environment:
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-admin}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-password}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - CATALOG_WAREHOUSE=s3://warehouse/
+      - CATALOG_IO__IMPL=org.apache.iceberg.aws.s3.S3FileIO
+      - CATALOG_S3_ENDPOINT=http://minio:9000
+      - CATALOG_S3_PATH__STYLE__ACCESS=true
+    depends_on:
+      minio:
+        condition: service_healthy
+
+  minio:
+    image: minio/minio:RELEASE.2024-08-17T01-24-54Z
+    container_name: minio
+    networks: [iceberg_net]
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=${AWS_ACCESS_KEY_ID:-admin}
+      - MINIO_ROOT_PASSWORD=${AWS_SECRET_ACCESS_KEY:-password}
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # One-shot: create the warehouse bucket, then exit.
+  mc:
+    image: minio/mc:RELEASE.2024-08-17T11-33-50Z
+    container_name: mc-init
+    networks: [iceberg_net]
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${AWS_ACCESS_KEY_ID:-admin} ${AWS_SECRET_ACCESS_KEY:-password};
+      mc mb --ignore-existing local/warehouse;
+      echo 'warehouse bucket ready';
+      "
+
+  spark-iceberg:
+    image: tabulario/spark-iceberg:3.5.1_1.5.0
+    container_name: spark-iceberg
+    networks: [iceberg_net]
+    depends_on:
+      iceberg-rest:
+        condition: service_started
+      minio:
+        condition: service_healthy
+    environment:
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-admin}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-password}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+    volumes:
+      - ./src:/home/iceberg/jobs           # PySpark jobs, mounted read-write
+      - ivy_cache:/root/.ivy2              # cache downloaded connector jars between runs
+    ports:
+      - "4040:4040"                        # Spark UI (shown while a job runs)
+    # Bypass the image's notebook entrypoint and just idle, so the test can
+    # `exec` spark-submit in (spark-submit runs local mode; no cluster needed).
+    entrypoint: ["/bin/bash", "-c", "tail -f /dev/null"]
+
+  # OPTIONAL local Neo4j. Start with:  docker compose --profile local-neo4j up -d
+  neo4j:
+    image: neo4j:5.23-community
+    container_name: neo4j
+    profiles: ["local-neo4j"]
+    networks: [iceberg_net]
+    ports:
+      - "7474:7474"   # HTTP / Browser
+      - "7687:7687"   # Bolt
+    environment:
+      - NEO4J_AUTH=${NEO4J_USERNAME:-neo4j}/${NEO4J_PASSWORD:-password12345}
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 >/dev/null 2>&1 || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+networks:
+  iceberg_net:
+    driver: bridge
+
+volumes:
+  ivy_cache:
