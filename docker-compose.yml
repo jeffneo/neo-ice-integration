@@ -4,16 +4,15 @@
 #   * minio        : S3-compatible object store (holds the Iceberg data/metadata files)
 #   * mc           : one-shot job that creates the "warehouse" bucket in MinIO
 #   * spark-iceberg: Spark 3.5 runtime with Iceberg jars pre-installed; runs the jobs
-#   * neo4j        : OPTIONAL local Neo4j, only started with `--profile local-neo4j`.
-#                    Omit the profile to point the test at an external Neo4j (e.g. Aura)
-#                    purely through the NEO4J_* environment variables.
+#   * neo4j        : Neo4j (latest LTS), started by default. To use an external
+#                    Neo4j (e.g. Aura) instead, point the NEO4J_* env vars at it
+#                    and start Iceberg only:  make up-external
 
 name: neo4j-iceberg-itest
 
 services:
   iceberg-rest:
     image: tabulario/iceberg-rest:1.5.0
-    container_name: iceberg-rest
     networks: [iceberg_net]
     ports:
       - "8181:8181"
@@ -31,7 +30,6 @@ services:
 
   minio:
     image: minio/minio:RELEASE.2024-08-17T01-24-54Z
-    container_name: minio
     networks: [iceberg_net]
     ports:
       - "9000:9000"
@@ -49,7 +47,6 @@ services:
   # One-shot: create the warehouse bucket, then exit.
   mc:
     image: minio/mc:RELEASE.2024-08-17T11-33-50Z
-    container_name: mc-init
     networks: [iceberg_net]
     depends_on:
       minio:
@@ -63,7 +60,6 @@ services:
 
   spark-iceberg:
     image: tabulario/spark-iceberg:3.5.1_1.5.0
-    container_name: spark-iceberg
     networks: [iceberg_net]
     depends_on:
       iceberg-rest:
@@ -83,23 +79,23 @@ services:
     # `exec` spark-submit in (spark-submit runs local mode; no cluster needed).
     entrypoint: ["/bin/bash", "-c", "tail -f /dev/null"]
 
-  # OPTIONAL local Neo4j. Start with:  docker compose --profile local-neo4j up -d
+  # Neo4j, started by default as part of the stack. The bare `neo4j:5.26` tag is
+  # the latest LTS. To run against an EXTERNAL Neo4j instead, point
+  # NEO4J_URI / NEO4J_URI_HOST at it in .env and simply don't start this service.
   neo4j:
-    image: neo4j:5.23-community
-    container_name: neo4j
-    profiles: ["local-neo4j"]
+    image: neo4j:5.26
     networks: [iceberg_net]
     ports:
       - "7474:7474"   # HTTP / Browser
       - "7687:7687"   # Bolt
     environment:
       - NEO4J_AUTH=${NEO4J_USERNAME:-neo4j}/${NEO4J_PASSWORD:-password12345}
-      - NEO4J_dbms_security_procedures_unrestricted=apoc.*
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 >/dev/null 2>&1 || exit 1"]
+      test: ["CMD-SHELL", "cypher-shell -u ${NEO4J_USERNAME:-neo4j} -p ${NEO4J_PASSWORD:-password12345} 'RETURN 1' >/dev/null 2>&1 || exit 1"]
       interval: 5s
       timeout: 5s
-      retries: 20
+      retries: 30
+      start_period: 30s
 
 networks:
   iceberg_net:

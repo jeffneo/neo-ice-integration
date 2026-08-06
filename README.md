@@ -28,7 +28,7 @@ be the **Neo4j Connector for Kafka** with an Iceberg sink.
 | `iceberg-rest` | Iceberg REST catalog (table metadata) |
 | `minio` + `mc` | S3-compatible object store + bucket bootstrap |
 | `spark-iceberg` | Spark 3.5 with Iceberg jars; runs both jobs |
-| `neo4j` *(optional)* | Local Neo4j, only with `--profile local-neo4j` |
+| `neo4j` | Neo4j (latest LTS), started by default; swappable for an external instance |
 
 Everything runs in Docker **except** the pytest harness, which runs on the host
 and talks to Neo4j over Bolt for seeding and verification.
@@ -52,45 +52,58 @@ The graph is flattened into four Iceberg tables in the `movies` namespace:
 No manual virtualenv needed — `uv` creates and manages `.venv` for you.
 
 ```bash
-cp .env.example .env          # then edit Neo4j creds if needed
+cp .env.example .env          # works out of the box for the default Docker setup
 uv sync                       # creates .venv and installs host deps
 ```
 
 `uv run <cmd>` (used by `make test`) auto-syncs and runs inside that `.venv`,
 so you never have to activate it manually. Prefer plain pip? `pip install
-neo4j==5.23.0 pytest==8.3.2 python-dotenv==1.0.1` in a venv of your own works
+neo4j==5.26.0 pytest==8.3.2 python-dotenv==1.0.1` in a venv of your own works
 too — the dependencies live in `pyproject.toml`.
 
-### Configure Neo4j (via environment variables)
+## Run (default: everything in Docker)
 
-Neo4j credentials are read entirely from the environment — nothing is
-hard-coded. Set these in `.env`:
+By default Neo4j runs in Docker alongside Iceberg — the stock `.env` needs no
+edits. `make up` waits until Neo4j is healthy, so `make test` can run right away:
+
+```bash
+make up            # iceberg-rest + minio + spark-iceberg + neo4j (waits for health)
+make test
+```
+
+The Neo4j Browser is at **http://localhost:7474** (Bolt on `7687`); log in with
+the `NEO4J_USERNAME` / `NEO4J_PASSWORD` from `.env` (defaults `neo4j` /
+`password12345`).
+
+### Using an external Neo4j instead (Aura or any non-Docker instance)
+
+Neo4j settings are read entirely from the environment. To target an external
+instance, set these in `.env` and start Iceberg only (don't run the container):
 
 | Variable | Meaning |
 |----------|---------|
-| `NEO4J_URI` | Bolt URI **as seen from the Spark container** (e.g. `bolt://neo4j:7687`, `bolt://host.docker.internal:7687`, or `neo4j+s://…` for Aura) |
-| `NEO4J_URI_HOST` | Bolt URI **as seen from the host** (defaults to `bolt://localhost:7687`) |
+| `NEO4J_URI` | Bolt URI **as seen from the Spark container** |
+| `NEO4J_URI_HOST` | Bolt URI **as seen from the host** (pytest driver) |
 | `NEO4J_USERNAME`, `NEO4J_PASSWORD`, `NEO4J_DATABASE` | credentials + target database |
 
-> The two URIs differ because the Spark job runs inside Docker while the pytest
-> harness runs on your host. With Aura (or any externally reachable URI) you can
-> set both to the same value.
-
-## Run
-
-**Option A — bring your own Neo4j** (external / Aura), Iceberg in Docker:
+For a Dockerized Neo4j the two URIs differ (`bolt://neo4j:7687` from the Spark
+container vs `bolt://localhost:7687` from the host). For an external instance
+they're the **same reachable URI**, e.g.:
 
 ```bash
-make up            # starts iceberg-rest, minio, spark-iceberg
+# .env
+NEO4J_URI=neo4j+s://<your-db-id>.databases.neo4j.io
+NEO4J_URI_HOST=neo4j+s://<your-db-id>.databases.neo4j.io
+NEO4J_USERNAME=neo4j
+NEO4J_PASSWORD=<your-password>
+```
+```bash
+make up-external   # Iceberg only; uses your external Neo4j
 make test
 ```
 
-**Option B — everything local**, including a throwaway Neo4j:
-
-```bash
-make up-local      # also starts a neo4j container
-make test
-```
+> ⚠️ The test **wipes the target database** at the start of every run (it assumes
+> a throwaway instance). Don't point it at a Neo4j that holds data you care about.
 
 Run the Spark jobs by hand if you want to inspect the intermediate state:
 
