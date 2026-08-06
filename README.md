@@ -111,7 +111,10 @@ Run the Spark jobs by hand if you want to inspect the intermediate state:
    `[:ACTED_IN_RT]` / `[:DIRECTED_RT]` labels.
 4. Asserts the round-trip graph **equals** the original (counts + a
    relationship-property spot check on `roles`).
-5. Cleans up the `:*RT` graph afterward.
+
+The test does **not** clean up afterward: the originals *and* the `:*RT`
+round-trip result are left in Neo4j so you can inspect both. The graph is wiped
+only at the **start** of the next run (step 1) or by `make clean`.
 
 ## Inspecting Iceberg
 
@@ -152,13 +155,18 @@ appear. This is the most direct way to *watch* Iceberg do its thing.
 
 ## Teardown
 
-`make test` deliberately **leaves the stack running** so you can inspect the
-tables afterward. Tear down explicitly when you're done:
+`make test` deliberately **leaves everything in place** — containers keep
+running and the Neo4j graph (originals + `:*RT`) is untouched — so you can
+inspect both sides afterward. Tear down explicitly when you're done:
 
 ```bash
+make wipe     # wipe the Neo4j graph only (containers stay up)
 make down     # stop & remove containers; Iceberg data survives in the volume
-make clean    # stop & remove containers AND volumes (wipes all Iceberg data)
+make clean    # wipe Neo4j graph AND remove containers + volumes (full reset)
 ```
+
+`make clean` wipes the Neo4j graph first (while a local Neo4j container, if
+used, is still reachable), then removes the Docker containers and Iceberg volume.
 
 ## Layout
 
@@ -171,6 +179,7 @@ scripts/_iceberg_conf.sh    # shared Iceberg catalog --conf flags
 scripts/run_spark_job.sh    # spark-submit wrapper (wires both connectors)
 scripts/inspect_iceberg.sh  # canned catalog report (make inspect)
 scripts/spark_sql.sh        # interactive spark-sql shell (make sql)
+scripts/wipe_neo4j.py       # wipe the Neo4j graph (make wipe / make clean)
 src/config.py               # env-driven config shared by both jobs
 src/neo4j_to_iceberg.py     # direction 1
 src/iceberg_to_neo4j.py     # direction 2

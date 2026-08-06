@@ -1,4 +1,4 @@
-.PHONY: help install up up-local down logs test inspect sql minio clean
+.PHONY: help install up up-local down logs test inspect sql minio wipe clean
 
 help:
 	@echo "Setup / run:"
@@ -13,8 +13,9 @@ help:
 	@echo "  make minio       # print the MinIO console URL + login"
 	@echo ""
 	@echo "Teardown:"
+	@echo "  make wipe        # wipe the Neo4j graph only (leaves containers up)"
 	@echo "  make down        # stop & remove containers (Iceberg data survives)"
-	@echo "  make clean       # stop & remove containers AND volumes (wipes Iceberg data)"
+	@echo "  make clean       # wipe Neo4j graph + remove containers AND volumes"
 
 install:
 	uv sync
@@ -45,8 +46,16 @@ minio:
 logs:
 	docker compose logs -f spark-iceberg
 
+wipe:
+	uv run python scripts/wipe_neo4j.py
+
 down:
 	docker compose --profile local-neo4j down
 
+# Full reset: wipe the Neo4j graph FIRST (while a local Neo4j container, if any,
+# is still up), then remove containers and volumes (Iceberg data). The leading
+# '-' makes the wipe best-effort so teardown still proceeds if Neo4j is
+# unreachable (e.g. containers already down on a fresh checkout).
 clean:
+	-uv run python scripts/wipe_neo4j.py
 	docker compose --profile local-neo4j down -v

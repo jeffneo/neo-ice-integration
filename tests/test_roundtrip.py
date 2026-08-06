@@ -8,8 +8,6 @@ The single ordered test proves the movie graph survives a full round-trip:
     4. Assert the RT graph equals the original -> data made the round trip intact.
     5. Clean up the RT graph.
 """
-import pytest
-
 from conftest import run_cypher, run_spark_job
 
 
@@ -77,11 +75,7 @@ def test_bidirectional_roundtrip(seeded_graph):
     )[0]["roles"]
     assert neo_role == rt_role == ["Neo"], f"roles not preserved: {neo_role} vs {rt_role}"
 
-
-@pytest.fixture(autouse=True)
-def _cleanup_rt(request):
-    """Remove the round-trip graph after the test, pass or fail."""
-    yield
-    driver = request.getfixturevalue("driver")
-    run_cypher(driver, "MATCH (n:MovieRT) DETACH DELETE n")
-    run_cypher(driver, "MATCH (n:PersonRT) DETACH DELETE n")
+    # No teardown here on purpose: the full graph — originals AND the :*RT
+    # round-trip result — is left in place so you can inspect it after the run.
+    # The graph is wiped only at the START of the next run (the seeded_graph
+    # fixture) or by `make clean`.
